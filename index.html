@@ -1,0 +1,231 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Perkenalan Adly</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;padding:24px 15px;min-height:100vh;
+  font-family:Arial,sans-serif;text-align:center;color:white;
+  background:linear-gradient(135deg,#080b24,#173d70,#511b70)
+}
+h1{color:#71faff;font-size:38px;letter-spacing:5px}
+p{color:#d9e7ff}
+.camera{
+  position:relative;width:100%;max-width:420px;
+  margin:20px auto;border:3px solid #71faff;
+  border-radius:22px;overflow:hidden;background:#080b18;
+  aspect-ratio:3/4
+}
+video,canvas{
+  position:absolute;width:100%;height:100%;inset:0;
+  object-fit:cover;transform:scaleX(-1)
+}
+#placeholder{
+  position:absolute;inset:0;display:grid;place-content:center;
+  padding:20px;line-height:1.8;color:#a9d9ff
+}
+.panel{
+  max-width:420px;margin:18px auto;padding:20px;
+  background:#ffffff12;border:1px solid #5878c5;border-radius:20px
+}
+#greeting{font-size:22px;font-weight:bold;color:#71faff;line-height:1.5}
+#status{font-size:14px;color:#ffe68b;line-height:1.6}
+button{
+  padding:13px 18px;margin:5px;border:0;border-radius:25px;
+  font-weight:bold;cursor:pointer
+}
+.start{background:#71faff;color:#10152d}
+.stop{background:#ed547a;color:white}
+.intro{background:#8065ed;color:white}
+.small{font-size:13px;line-height:1.7;color:#d4dcff}
+</style>
+</head>
+
+<body>
+
+<h1>HELLO, ADLY!</h1>
+<p>✨ Perkenalan Interaktif ✨</p>
+
+<div class="camera">
+  <div id="placeholder">
+    📷<br>Klik MULAI KAMERA<br>untuk memulai!
+  </div>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<div class="panel">
+  <div id="greeting">Halo semuanya! 👋</div>
+  <p id="status">Ayo mulai perkenalan!</p>
+
+  <button class="start" id="start">📷 MULAI KAMERA</button>
+  <button class="stop" id="stop">MATIKAN</button>
+  <br>
+  <button class="intro" id="intro">👋 PERKENALKAN SAYA</button>
+</div>
+
+<div class="small">
+  🖐️ Telapak tangan: Halo semuanya!<br>
+  ✌️ Dua jari: Perkenalkan, nama saya Adly!<br>
+  👍 Jempol: Senang berkenalan dengan kalian!
+  <br><br>
+  Izinkan akses kamera saat diminta.
+</div>
+
+<script type="module">
+import {
+  FilesetResolver,
+  HandLandmarker,
+  DrawingUtils
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const greeting = document.getElementById("greeting");
+const status = document.getElementById("status");
+const placeholder = document.getElementById("placeholder");
+
+let stream = null;
+let detector = null;
+let active = false;
+let previousTime = -1;
+let previousGesture = "";
+let lastChange = 0;
+
+async function loadDetector() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+
+  detector = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 1
+  });
+}
+
+function classify(hand) {
+  const index = hand[8].y < hand[6].y;
+  const middle = hand[12].y < hand[10].y;
+  const ring = hand[16].y < hand[14].y;
+  const pinky = hand[20].y < hand[18].y;
+
+  const extended = [index, middle, ring, pinky]
+    .filter(Boolean).length;
+
+  const thumb =
+    Math.hypot(hand[4].x-hand[2].x, hand[4].y-hand[2].y) >
+    Math.hypot(hand[3].x-hand[2].x, hand[3].y-hand[2].y)*1.2;
+
+  if (index && middle && !ring && !pinky) return "peace";
+  if (thumb && extended === 0) return "thumb";
+  if (extended >= 4) return "open";
+  return "none";
+}
+
+function updateGesture(gesture) {
+  const messages = {
+    open: ["Halo semuanya! 👋", "Gestur: telapak tangan terbuka"],
+    peace: ["Perkenalkan, nama saya Adly! ✌️", "Gestur: dua jari"],
+    thumb: ["Senang berkenalan dengan kalian! 👍", "Gestur: jempol"],
+    none: ["Ayo tunjukkan gestur tangan!", "Tangan belum terdeteksi"]
+  };
+
+  greeting.textContent = messages[gesture][0];
+  status.textContent = messages[gesture][1];
+}
+
+function frame() {
+  if (!active) return;
+
+  if (video.readyState >= 2 && video.currentTime !== previousTime) {
+    previousTime = video.currentTime;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const result = detector.detectForVideo(video, performance.now());
+    const drawing = new DrawingUtils(ctx);
+    let gesture = "none";
+
+    if (result.landmarks.length) {
+      result.landmarks.forEach(hand => {
+        drawing.drawConnectors(
+          hand, HandLandmarker.HAND_CONNECTIONS,
+          {color:"#00F5FF", lineWidth:4}
+        );
+        drawing.drawLandmarks(hand, {
+          color:"#FFFFFF", fillColor:"#8B5CF6", radius:4
+        });
+      });
+      gesture = classify(result.landmarks[0]);
+    }
+
+    if (gesture !== previousGesture &&
+        Date.now() - lastChange > 300) {
+      previousGesture = gesture;
+      lastChange = Date.now();
+      updateGesture(gesture);
+    }
+  }
+
+  requestAnimationFrame(frame);
+}
+
+document.getElementById("start").onclick = async () => {
+  try {
+    status.textContent = "Menyiapkan kamera...";
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode:"user"}, audio:false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+    placeholder.style.display = "none";
+
+    if (!detector) await loadDetector();
+
+    active = true;
+    previousTime = -1;
+    status.textContent = "Kamera aktif! Tunjukkan tanganmu.";
+    requestAnimationFrame(frame);
+  } catch (error) {
+    status.textContent =
+      "Kamera gagal dibuka. Izinkan kamera dan periksa koneksi internet.";
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    video.srcObject = null;
+    placeholder.style.display = "grid";
+  }
+};
+
+document.getElementById("stop").onclick = () => {
+  active = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  video.srcObject = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  placeholder.style.display = "grid";
+  greeting.textContent = "Sampai jumpa! 👋";
+  status.textContent = "Kamera sudah dimatikan.";
+};
+
+document.getElementById("intro").onclick = () => {
+  greeting.textContent =
+    "Halo semuanya! Saya Adly. Senang berkenalan dengan kalian! ✨";
+  status.textContent = "Salam kenal dari Adly!";
+};
+</script>
+
+</body>
+</html>
